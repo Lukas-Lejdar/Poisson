@@ -5,7 +5,7 @@ import natsort
 import glob
 import time
 
-for file in glob.glob("build/*.vtu"):
+for file in sorted(glob.glob("build/*.vtu")):
     mesh = pv.read(file)
     mesh.points[:, 2] = mesh["potential"]
 
@@ -16,7 +16,8 @@ for file in glob.glob("build/*.vtu"):
         (0, 1, 0)
     ]
 
-    plotter.add_mesh(mesh, scalars="potential", cmap="viridis", clim=[0, 1])
+    plotter.add_mesh(mesh, scalars="potential", show_edges=True, cmap="viridis", clim=[0, 1])
+    plotter.add_text(f"{file}", position='upper_left', font_size=12, color='black')
     plotter.show(auto_close=False)
     plotter.close()
 
