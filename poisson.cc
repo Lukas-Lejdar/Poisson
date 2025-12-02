@@ -32,8 +32,6 @@
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/lac/full_matrix.h>
 #include <deal.II/lac/vector.h>
-#include <deal.II/numerics/error_estimator.h>
-
 
 #include <deal.II/numerics/data_out.h>
 #include <fstream>
@@ -46,12 +44,9 @@
 #include <deal.II/base/thread_management.h>
 
 #include <deal.II/base/timer.h>
-#include <string>
 #include <system_error>
 #include <vector>
 
-const dealii::types::boundary_id inner_id = 1; 
-const dealii::types::boundary_id outer_id = 2; 
 
 template<int dim>
 class Poisson {
@@ -69,8 +64,6 @@ class Poisson {
         const dealii::SparsityPattern& get_sp() const { return sp; }
         const dealii::DoFHandler<dim>& get_dof_handler() const { return dof_handler; }
 
-        dealii::AffineConstraints<double> constraints;
-
     private:
 
         dealii::DoFHandler<dim> dof_handler;
@@ -78,8 +71,6 @@ class Poisson {
 
         dealii::QGauss<dim> quadrature;
         dealii::QGauss<dim-1> face_quadrature;
-
-
 };
 
 template <int dim>
@@ -97,16 +88,8 @@ template <int dim>
 void Poisson<dim>::reinitialize() {
     dof_handler.distribute_dofs(fe);
 
-    constraints.clear();
-
-    dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
-    dealii::VectorTools::interpolate_boundary_values( dof_handler, inner_id, dealii::Functions::ConstantFunction<dim>(0.), constraints);
-    dealii::VectorTools::interpolate_boundary_values( dof_handler, outer_id, dealii::Functions::ConstantFunction<dim>(1.), constraints);
-
-    constraints.close();
-
     dealii::DynamicSparsityPattern dsp(dof_handler.n_dofs());
-    dealii::DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, false);
+    dealii::DoFTools::make_sparsity_pattern(dof_handler, dsp);
     sp.copy_from(dsp);
 }
 
@@ -140,8 +123,7 @@ void Poisson<dim>::add_volume_matrix(
         }
 
         cell->get_dof_indices(local_dof);
-        constraints.distribute_local_to_global( local_mat, local_dof, system_matrix );
-        //system_matrix.add(local_dof, local_mat);
+        system_matrix.add(local_dof, local_mat);
     }
 };
 
@@ -185,8 +167,7 @@ void Poisson<dim>::add_boundary_matrix(
         }
 
         cell->get_dof_indices(local_dof);
-        constraints.distribute_local_to_global( local_mat, local_dof, system_matrix );
-        //system_matrix.add(local_dof, local_mat);
+        system_matrix.add(local_dof, local_mat);
     }
 }
 
@@ -272,6 +253,9 @@ public:
     }
 };
 
+const dealii::types::boundary_id inner_id = 0; 
+const dealii::types::boundary_id outer_id = 1; 
+
 template <int dim>
 dealii::Vector<double> run(Poisson<dim>& poisson, const RadialCapacitor& capacitor) {
 
@@ -292,30 +276,20 @@ dealii::Vector<double> run(Poisson<dim>& poisson, const RadialCapacitor& capacit
     poisson.add_boundary_matrix(system_matrix, permittivity);
     poisson.add_volume_matrix(system_matrix, permittivity);
 
-    //poisson.constraints.condense(system_rhs);
+    // add boundary conditions
 
-    //std::map<dealii::types::global_dof_index, double> boundary_values;
-    //dealii::VectorTools::interpolate_boundary_values(dof_handler, inner_id, dealii::Functions::ConstantFunction<dim>(capacitor.voltage0), boundary_values); 
-    //dealii::VectorTools::interpolate_boundary_values(dof_handler, outer_id, dealii::Functions::ConstantFunction<dim>(capacitor.voltage1), boundary_values); 
-    //dealii::MatrixTools::apply_boundary_values(boundary_values, system_matrix, solution, system_rhs);
+    std::map<dealii::types::global_dof_index, double> boundary_values;
+    dealii::VectorTools::interpolate_boundary_values(dof_handler, inner_id, dealii::Functions::ConstantFunction<dim>(capacitor.voltage0), boundary_values); 
+    dealii::VectorTools::interpolate_boundary_values(dof_handler, outer_id, dealii::Functions::ConstantFunction<dim>(capacitor.voltage1), boundary_values); 
+    dealii::MatrixTools::apply_boundary_values(boundary_values, system_matrix, solution, system_rhs);
 
-    poisson.constraints.condense(system_matrix, system_rhs);
+    // solve
 
-    //dealii::AffineConstraints<double> constraints;
-    //dealii::VectorTools::interpolate_boundary_values( dof_handler, inner_id, dealii::Functions::ConstantFunction<dim>(capacitor.voltage0), constraints);
-    //dealii::VectorTools::interpolate_boundary_values( dof_handler, outer_id, dealii::Functions::ConstantFunction<dim>(capacitor.voltage1), constraints);
-
-    //constraints.close();
-    //constraints.condense(system_rhs);
-
-    dealii::SolverControl solver_control(1000, 1e-8 * system_rhs.l2_norm());
+    dealii::SolverControl solver_control(1000, 1e-6 * system_rhs.l2_norm());
     dealii::SolverCG<dealii::Vector<double>> solver(solver_control);
     solver.solve(system_matrix, solution, system_rhs, dealii::PreconditionIdentity());
 
-    poisson.constraints.distribute(solution);
-
-    //std::cout << solver_control.last_step() << " CG iterations needed to obtain convergence. matrix size: " << dof_handler.n_dofs() << std::endl;
-
+    std::cout << solver_control.last_step() << " CG iterations needed to obtain convergence." << std::endl;
 
     return solution;
 }
@@ -324,7 +298,7 @@ int main() {
 
     // problem definition
 
-    const RadialCapacitor capacitor{0.5, 0.75, 1., 0., 1., 6., 1.}; // r0, r1, r2, U0, U2, eps0_1, eps1_2
+    const RadialCapacitor capacitor{0.5, 0.75, 1., 0., 1., 1., 10.}; // r0, r1, r2, U0, U2, eps0_1, eps1_2
     const Exact2DPotentialSolution ex_solution(capacitor); 
 
     // Create triangulation
@@ -332,7 +306,7 @@ int main() {
     dealii::Triangulation<2> triangulation;
     const dealii::Point<2> center(0, 0);
     dealii::GridGenerator::hyper_shell( triangulation, center, capacitor.r0, capacitor.r2, 10);
-    triangulation.refine_global(3);
+    triangulation.refine_global(2);
 
     // label boundaries
 
@@ -350,13 +324,12 @@ int main() {
     Poisson<2> poisson{triangulation};
     dealii::Vector<double> solution;
 
-    for (int i = 0; i < 8; i++) {
+
+    for (int i = 0; i < 4; i++) {
 
         solution = run(poisson, capacitor);
-        poisson.write_out_solution(solution, "solution" + std::to_string(i) + ".vtu");
 
         dealii::Vector<double> difference_per_cell(triangulation.n_active_cells());
-
         dealii::VectorTools::integrate_difference(
             poisson.get_dof_handler(),
             solution,
@@ -369,14 +342,17 @@ int main() {
         double l2_error = difference_per_cell.l2_norm();
         std::cout << i << "th refinement total l2 error: " << l2_error << "\n";
 
-        dealii::Vector<float> est_err_per_cell(triangulation.n_active_cells());
-        for (unsigned int c = 0; c < triangulation.n_active_cells(); ++c) {
-            est_err_per_cell[c] = difference_per_cell[c];
-        }
+        dealii::Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
+        for (unsigned int c = 0; c < triangulation.n_active_cells(); ++c)
+            estimated_error_per_cell[c] = difference_per_cell[c];
+
+        if (i == 3) poisson.write_out_solution(solution, "solution.vtu");
 
         // adaptive
-        // dealii::GridRefinement::refine_and_coarsen_fixed_number(triangulation, est_err_per_cell, 0.3, 0.0);
-        // triangulation.execute_coarsening_and_refinement();
+        //dealii::GridRefinement::refine_and_coarsen_fixed_number(
+        //    triangulation, estimated_error_per_cell, 0.3, 0.0
+        //);
+        //triangulation.execute_coarsening_and_refinement();
         
         triangulation.refine_global(1);
         poisson.reinitialize();
