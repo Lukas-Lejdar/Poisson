@@ -50,8 +50,6 @@
 #include <system_error>
 #include <vector>
 
-const dealii::types::boundary_id inner_id = 0; 
-const dealii::types::boundary_id outer_id = 1; 
 
 dealii::UpdateFlags POISSON_VOLUME_FLAGS = 
     dealii::update_gradients |
@@ -114,6 +112,114 @@ void assemble_local_poisson_boundary_matrix(
 }
 
 template<int dim>
+void assemble_poisson_system(
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::AffineConstraints<double>& constraints,
+    const dealii::Function<dim>& permittivity,
+    dealii::SparseMatrix<double>& system_matrix,
+    dealii::Vector<double>& system_rhs
+) {
+    auto& fe = dof_handler.get_fe();
+
+    dealii::QGauss<dim> quadrature{fe.degree + 1};
+    dealii::QGauss<dim-1> face_quadrature{fe.degree + 1};
+
+    dealii::FEValues<dim> fe_values{fe, quadrature, POISSON_VOLUME_FLAGS };
+    dealii::FEFaceValues<dim> fe_face_values{fe, face_quadrature, POISSON_BOUNDARY_FLAGS };
+
+    dealii::FullMatrix<double> local_mat(fe.dofs_per_cell, fe.dofs_per_cell);
+    dealii::Vector<double> cell_rhs(fe.dofs_per_cell);
+    std::vector<dealii::types::global_dof_index> local_dof(fe.dofs_per_cell);
+
+    for (const auto& cell : dof_handler.active_cell_iterators()) {
+        local_mat = 0;
+        cell_rhs = 0;
+
+        fe_values.reinit(cell);
+        assemble_local_poisson_volume_matrix(fe_values, permittivity, local_mat);
+
+        for (uint face = 0; face < dealii::GeometryInfo<dim>::faces_per_cell; ++face) {
+            if (!cell->face(face)->at_boundary()) continue;
+            fe_face_values.reinit(cell, face);
+            assemble_local_poisson_boundary_matrix(fe_face_values, permittivity, local_mat);
+        }
+
+        cell->get_dof_indices(local_dof);
+        constraints.distribute_local_to_global(local_mat, cell_rhs, local_dof, system_matrix, system_rhs);
+    }
+}
+
+template <typename MatrixType, typename VectorType>
+void solve_cg(const MatrixType& system_matrix, VectorType& solution, const VectorType& rhs) {
+    dealii::SolverControl solver_control(1000, 1e-6 * rhs.l2_norm());
+    dealii::PreconditionSSOR<MatrixType> preconditioner;
+    preconditioner.initialize(system_matrix, 1.2);
+
+    dealii::SolverCG<VectorType> solver(solver_control);
+    solver.solve(system_matrix, solution, rhs, dealii::PreconditionIdentity());
+    std::cout << solver_control.last_step() << " CG iterations needed to converge.\n";
+}
+
+template <int dim>
+dealii::Vector<double> solve_poisson_system(
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::Function<dim>& permittivity,
+    const dealii::AffineConstraints<double>& user_constraints
+) {
+
+    dealii::AffineConstraints<double> constraints{user_constraints};
+    dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+    constraints.close();
+
+    dealii::DynamicSparsityPattern dsp(dof_handler.n_dofs());
+    dealii::DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, false);
+    dealii::SparsityPattern sp;
+    sp.copy_from(dsp);
+
+    dealii::Vector<double> solution;
+    dealii::Vector<double> system_rhs;
+    dealii::SparseMatrix<double> system_matrix;
+
+    system_matrix.reinit(sp);
+    system_rhs.reinit(dof_handler.n_dofs());
+    solution.reinit(dof_handler.n_dofs());
+
+    assemble_poisson_system(dof_handler, constraints, permittivity, system_matrix, system_rhs);
+    solve_cg(system_matrix, solution, system_rhs);
+    constraints.distribute(solution);
+
+    return solution;
+}
+
+template<int dim>
+double smallest_cell_size(const dealii::Triangulation<dim>& triangulation) {
+    double h_min = std::numeric_limits<double>::max();
+    for (const auto &cell : triangulation.active_cell_iterators())
+        h_min = std::min(h_min, cell->minimum_vertex_distance());
+    return h_min;
+}
+
+template<int dim>
+double get_l2_error(
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::Vector<double>& solution,
+    const dealii::Function<dim>& ex_solution
+) {
+    dealii::Vector<double> difference_per_cell(dof_handler.get_triangulation().n_active_cells());
+    dealii::VectorTools::integrate_difference(
+        dof_handler,
+        solution,
+        ex_solution,
+        difference_per_cell,
+        dealii::QGauss<2>(dof_handler.get_fe().degree + 1),
+        dealii::VectorTools::L2_norm
+    );
+
+    return difference_per_cell.l2_norm();
+}
+
+
+template<int dim>
 void write_out_solution(
     const dealii::DoFHandler<dim>& dof_handler,
     const dealii::Vector<double>& solution,
@@ -131,7 +237,6 @@ void write_out_solution(
     data_out.write_vtu(output);
 }
 
-
 struct RadialCapacitor{
     const double r0;
     const double r1;
@@ -144,6 +249,16 @@ struct RadialCapacitor{
     const double epsilon1_2;
 };
 
+template <int dim>
+class PermittivityFunction : public dealii::Function<dim> {
+public:
+    const RadialCapacitor capacitor;
+    PermittivityFunction(const RadialCapacitor capacitor) : capacitor(capacitor) {}
+
+    double value(const dealii::Point<dim> &p, const unsigned int = 0) const override {
+        return p.norm() < capacitor.r1 ? capacitor.epsilon0_1 : capacitor.epsilon1_2;
+    }
+};
 
 class Exact2DPotentialSolution : public dealii::Function<2> {
 private:
@@ -156,7 +271,6 @@ public:
     Exact2DPotentialSolution(const RadialCapacitor capacitor) 
         : capacitor(capacitor) 
     {
-
         const double rhs_vec[4] = { capacitor.voltage0, capacitor.voltage1, 0, 0 };
         const double system_mat[4][4] = {
             { std::log(capacitor.r0), 1.0, 0.0, 0.0 },
@@ -188,134 +302,47 @@ public:
     }
 };
 
-/// Relative permittivity as a function of position
-template <int dim>
-class PermittivityFunction : public dealii::Function<dim> {
-public:
-    const RadialCapacitor capacitor;
-    PermittivityFunction(const RadialCapacitor capacitor) : capacitor(capacitor) {}
-
-    double value(const dealii::Point<dim> &p, const unsigned int = 0) const override {
-        return p.norm() < capacitor.r1 ? capacitor.epsilon0_1 : capacitor.epsilon1_2;
-    }
-};
-
-template <typename MatrixType, typename VectorType>
-void solve_cg(const MatrixType& system_matrix, VectorType& solution, const VectorType& rhs) {
-    dealii::SolverControl solver_control(1000, 1e-6 * rhs.l2_norm());
-    dealii::PreconditionSSOR<MatrixType> preconditioner;
-    preconditioner.initialize(system_matrix, 1.2);
-
-    dealii::SolverCG<VectorType> solver(solver_control);
-    solver.solve(system_matrix, solution, rhs, dealii::PreconditionIdentity());
-    std::cout << solver_control.last_step() << " CG iterations needed to converge.\n";
-}
-
-template <int dim>
-dealii::Vector<double> run(const dealii::DoFHandler<dim>& dof_handler, const RadialCapacitor& capacitor) {
-
-    auto& fe = dof_handler.get_fe();
-    //auto& triangulation = dof_handler.get_triangulation();
-
-    dealii::AffineConstraints<double> constraints;
-    dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
-    dealii::VectorTools::interpolate_boundary_values(dof_handler, inner_id, dealii::Functions::ConstantFunction<dim>(capacitor.voltage0), constraints); 
-    dealii::VectorTools::interpolate_boundary_values(dof_handler, outer_id, dealii::Functions::ConstantFunction<dim>(capacitor.voltage1), constraints); 
-    constraints.close();
-
-    dealii::DynamicSparsityPattern dsp(dof_handler.n_dofs());
-    dealii::DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, false);
-    dealii::SparsityPattern sp;
-    sp.copy_from(dsp);
-
-    // setup
-
-    const PermittivityFunction<2> permittivity{capacitor};
-
-    dealii::Vector<double> solution;
-    dealii::Vector<double> system_rhs;
-    dealii::SparseMatrix<double> system_matrix;
-
-    system_matrix.reinit(sp);
-    system_rhs.reinit(dof_handler.n_dofs());
-    solution.reinit(dof_handler.n_dofs());
-
-    dealii::QGauss<dim> quadrature{fe.degree + 1};
-    dealii::QGauss<dim-1> face_quadrature{fe.degree + 1};
-    dealii::FEValues<dim> fe_values{fe, quadrature, POISSON_VOLUME_FLAGS };
-    dealii::FEFaceValues<dim> fe_face_values{fe, face_quadrature, POISSON_BOUNDARY_FLAGS };
-
-    dealii::FullMatrix<double> local_mat(fe.dofs_per_cell, fe.dofs_per_cell);
-    dealii::Vector<double> cell_rhs(fe.dofs_per_cell);
-    std::vector<dealii::types::global_dof_index> local_dof(fe.dofs_per_cell);
-
-    for (const auto& cell : dof_handler.active_cell_iterators()) {
-        local_mat = 0;
-        cell_rhs = 0;
-
-        fe_values.reinit(cell);
-        assemble_local_poisson_volume_matrix(fe_values, permittivity, local_mat);
-
-        for (uint face = 0; face < dealii::GeometryInfo<dim>::faces_per_cell; ++face) {
-            if (!cell->face(face)->at_boundary()) continue;
-            fe_face_values.reinit(cell, face);
-            assemble_local_poisson_boundary_matrix(fe_face_values, permittivity, local_mat);
-        }
-
-        cell->get_dof_indices(local_dof);
-        constraints.distribute_local_to_global(local_mat, cell_rhs, local_dof, system_matrix, system_rhs);
-    }
-    
-    solve_cg(system_matrix, solution, system_rhs);
-    constraints.distribute(solution);
-
-    return solution;
-}
-
 int main() {
 
     // problem definition
 
-    const RadialCapacitor capacitor{0.5, 0.75, 1., -0.5, 0.5, 1., 10.}; // r0, r1, r2, U0, U2, eps0_1, eps1_2
+    const RadialCapacitor capacitor{0.5, 0.75, 1., 0., 1., 1., 10.}; // r0, r1, r2, U0, U2, eps0_1, eps1_2
     const Exact2DPotentialSolution ex_solution(capacitor); 
+    const PermittivityFunction<2> permittivity{capacitor};
 
     // Create triangulation
 
     dealii::Triangulation<2> triangulation;
     const dealii::Point<2> center(0, 0);
-    dealii::GridGenerator::hyper_shell( triangulation, center, capacitor.r0, capacitor.r2, 10);
+    dealii::GridGenerator::hyper_shell( triangulation, center, capacitor.r0, capacitor.r2, 10, true);
     triangulation.refine_global(2);
 
-    // label boundaries
-
-    for (const auto &cell : triangulation.active_cell_iterators()) {
-        for (unsigned int f = 0; f < dealii::GeometryInfo<2>::faces_per_cell; ++f) {
-            if (!cell->face(f)->at_boundary()) continue;
-            const double distance = cell->face(f)->center().distance(center);
-            if (std::abs(distance - capacitor.r0) < 1e-1) cell->face(f)->set_boundary_id(inner_id);
-            else if (std::abs(distance - capacitor.r2) < 1e-1) cell->face(f)->set_boundary_id(outer_id);
-        }
-    }
-
-    // errors
-
-    std::ofstream error_file("l2_errors.txt");
+    // boundary ids assigned in dealii::GridGenerator::hyper_shell
+    const dealii::types::boundary_id inner_id = 0, outer_id = 1; 
 
     // solve
 
     dealii::FE_Q<2> fe{1};
     dealii::DoFHandler<2> dof_handler{triangulation};
     dof_handler.distribute_dofs(fe);
-    dealii::Vector<double> solution;
 
-    for (int i = 0; i < 12; i++) {
+    std::ofstream error_file("l2_errors.txt");
 
-        solution = run(dof_handler, capacitor);
+    for (int i = 0; i < 9; i++) {
+
+        dealii::AffineConstraints<double> constraints;
+        dealii::VectorTools::interpolate_boundary_values(dof_handler, inner_id, dealii::Functions::ConstantFunction<2>(capacitor.voltage0), constraints); 
+        dealii::VectorTools::interpolate_boundary_values(dof_handler, outer_id, dealii::Functions::ConstantFunction<2>(capacitor.voltage1), constraints); 
+    
+        dealii::Vector<double> solution = solve_poisson_system(dof_handler, permittivity, constraints);
         write_out_solution(dof_handler, solution, "solution" + std::to_string(i) + ".vtu");
 
-        dealii::Vector<double> difference_per_cell(triangulation.n_active_cells());
-        double l2_error = dealii::VectorTools::compute_global_error(triangulation, difference_per_cell, dealii::VectorTools::L2_norm);
-        std::cout << i << "th refinement total l2 error: " << l2_error << "\n";
+        // l2 error
+
+        double l2_error = get_l2_error(dof_handler, solution, ex_solution);
+        std::cout << "smallest cell size: " << smallest_cell_size(triangulation) << " l2: " << l2_error << "\n";
+        error_file << smallest_cell_size(triangulation) << " " << l2_error << "\n";
+        error_file.flush();
 
         // refinement
 
@@ -323,7 +350,10 @@ int main() {
         dealii::KellyErrorEstimator<2>::estimate( dof_handler, dealii::QGauss<1>(fe.degree + 1), {}, solution, estimated_error_per_cell);
         dealii::GridRefinement::refine_and_coarsen_fixed_number(triangulation, estimated_error_per_cell, 0.3, 0.03);
 
+        //triangulation.refine_global(1);
         triangulation.execute_coarsening_and_refinement();
         dof_handler.distribute_dofs(fe);
     }
+
+    error_file.close();
 }
