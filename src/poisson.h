@@ -1,13 +1,12 @@
 
-#include <cstdlib>
+#pragma once
+
 #include <deal.II/base/point.h>
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/function.h>
-#include <deal.II/base/numbers.h>
 #include <deal.II/base/tensor.h>
 #include <deal.II/base/types.h>
 #include <deal.II/fe/fe_update_flags.h>
-#include <deal.II/lac/sparsity_pattern.h>
 #include <deal.II/lac/vector.h>
 #include <deal.II/lac/full_matrix.h>
 #include <deal.II/lac/sparse_matrix.h>
@@ -16,45 +15,28 @@
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/affine_constraints.h>
 #include <deal.II/grid/tria.h>
-#include <deal.II/grid/grid_generator.h>
-#include <deal.II/grid/grid_in.h>
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
-#include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
-#include <deal.II/fe/fe_system.h>
 #include <deal.II/numerics/vector_tools.h>
-#include <deal.II/numerics/vector_tools_common.h>
-#include <deal.II/numerics/vector_tools_constraints.h>
-#include <deal.II/numerics/data_out.h>
-#include <deal.II/numerics/vector_tools.h>
-#include <deal.II/numerics/matrix_tools.h>
-#include <deal.II/grid/grid_generator.h>
-#include <deal.II/grid/grid_out.h>
-#include <deal.II/lac/full_matrix.h>
-#include <deal.II/lac/vector.h>
-
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/vector_tools_integrate_difference.h>
-#include <fstream>
-#include <iostream>
-#include <cmath>
-#include <set>
-
 #include <deal.II/grid/grid_refinement.h>
 #include <deal.II/numerics/error_estimator.h>
-#include <deal.II/base/thread_management.h>
 
-#include <deal.II/base/timer.h>
-#include <string>
-#include <system_error>
 #include <vector>
+#include <string>
+#include <iostream>
+#include <limits>
+#include <cmath>
+#include <fstream>
 
 
 dealii::UpdateFlags POISSON_VOLUME_FLAGS = 
     dealii::update_gradients |
     dealii::update_JxW_values |
     dealii::update_quadrature_points;
+
 
 template<int dim>
 void assemble_local_poisson_volume_matrix(
@@ -79,12 +61,14 @@ void assemble_local_poisson_volume_matrix(
     }
 }
 
+
 dealii::UpdateFlags POISSON_BOUNDARY_FLAGS = 
     dealii::update_values |
     dealii::update_normal_vectors |
     dealii::update_gradients |
     dealii::update_JxW_values  |
     dealii::update_quadrature_points;
+
 
 template<int dim>
 void assemble_local_poisson_boundary_matrix(
@@ -110,6 +94,7 @@ void assemble_local_poisson_boundary_matrix(
         }
     }
 }
+
 
 template<int dim>
 void assemble_poisson_system(
@@ -148,6 +133,7 @@ void assemble_poisson_system(
         constraints.distribute_local_to_global(local_mat, cell_rhs, local_dof, system_matrix, system_rhs);
     }
 }
+
 
 template <typename MatrixType, typename VectorType>
 void solve_cg(const MatrixType& system_matrix, VectorType& solution, const VectorType& rhs) {
@@ -190,6 +176,7 @@ dealii::Vector<double> solve_poisson_system(
 
     return solution;
 }
+
 
 template<int dim>
 double smallest_cell_size(const dealii::Triangulation<dim>& triangulation) {
@@ -235,125 +222,4 @@ void write_out_solution(
 
     std::ofstream output(file);
     data_out.write_vtu(output);
-}
-
-struct RadialCapacitor{
-    const double r0;
-    const double r1;
-    const double r2;
-
-    const double voltage0;
-    const double voltage1;
-
-    const double epsilon0_1;
-    const double epsilon1_2;
-};
-
-template <int dim>
-class PermittivityFunction : public dealii::Function<dim> {
-public:
-    const RadialCapacitor capacitor;
-    PermittivityFunction(const RadialCapacitor capacitor) : capacitor(capacitor) {}
-
-    double value(const dealii::Point<dim> &p, const unsigned int = 0) const override {
-        return p.norm() < capacitor.r1 ? capacitor.epsilon0_1 : capacitor.epsilon1_2;
-    }
-};
-
-class Exact2DPotentialSolution : public dealii::Function<2> {
-private:
-    // phi(r ∈ [r0, r1]) = solution[0] ln r + solution[2]
-    // phi(r ∈ [r1, r2]) = solution[2] ln r + solution[3]
-    dealii::Vector<double> consts; 
-
-public:
-    const RadialCapacitor capacitor;
-    Exact2DPotentialSolution(const RadialCapacitor capacitor) 
-        : capacitor(capacitor) 
-    {
-        const double rhs_vec[4] = { capacitor.voltage0, capacitor.voltage1, 0, 0 };
-        const double system_mat[4][4] = {
-            { std::log(capacitor.r0), 1.0, 0.0, 0.0 },
-            { 0.0, 0.0, std::log(capacitor.r2), 1.0 },
-            { std::log(capacitor.r1), 1.0, -std::log(capacitor.r1), -1.0 },
-            { capacitor.epsilon0_1, 0.0, -capacitor.epsilon1_2, 0.0 }
-        };
-
-        dealii::FullMatrix<double> system(4, 4); // system matrix 
-        dealii::Vector<double> rhs(4);
-        consts.reinit(4);
-
-        for (uint i=0; i < 4; i++) {
-            rhs[i] = rhs_vec[i];
-            for (uint j = 0; j < 4; j++) {
-                system(i,j) = system_mat[i][j];
-            }
-        }
-
-        system.gauss_jordan();             // in-place Gauss-Jordan invert
-        system.vmult(consts, rhs);         // x = A^{-1} * b
-    }
-
-    double value(const dealii::Point<2> &p, const unsigned int = 0) const override {
-        double r = p.norm();
-        return (r < capacitor.r1)
-            ? consts[0]*std::log(r) + consts[1] 
-            : consts[2]*std::log(r) + consts[3];
-    }
-};
-
-int main() {
-
-    // problem definition
-
-    const RadialCapacitor capacitor{0.5, 0.75, 1., 0., 1., 1., 10.}; // r0, r1, r2, U0, U2, eps0_1, eps1_2
-    const Exact2DPotentialSolution ex_solution(capacitor); 
-    const PermittivityFunction<2> permittivity{capacitor};
-
-    // Create triangulation
-
-    dealii::Triangulation<2> triangulation;
-    const dealii::Point<2> center(0, 0);
-    dealii::GridGenerator::hyper_shell( triangulation, center, capacitor.r0, capacitor.r2, 10, true);
-    triangulation.refine_global(2);
-
-    // boundary ids assigned in dealii::GridGenerator::hyper_shell
-    const dealii::types::boundary_id inner_id = 0, outer_id = 1; 
-
-    // solve
-
-    dealii::FE_Q<2> fe{1};
-    dealii::DoFHandler<2> dof_handler{triangulation};
-    dof_handler.distribute_dofs(fe);
-
-    std::ofstream error_file("l2_errors.txt");
-
-    for (int i = 0; i < 9; i++) {
-
-        dealii::AffineConstraints<double> constraints;
-        dealii::VectorTools::interpolate_boundary_values(dof_handler, inner_id, dealii::Functions::ConstantFunction<2>(capacitor.voltage0), constraints); 
-        dealii::VectorTools::interpolate_boundary_values(dof_handler, outer_id, dealii::Functions::ConstantFunction<2>(capacitor.voltage1), constraints); 
-
-        dealii::Vector<double> solution = solve_poisson_system(dof_handler, permittivity, constraints);
-        write_out_solution(dof_handler, solution, "solutions/solution" + std::to_string(i) + ".vtu");
-
-        // l2 error
-
-        double l2_error = get_l2_error(dof_handler, solution, ex_solution);
-        std::cout << "smallest cell size: " << smallest_cell_size(triangulation) << " l2: " << l2_error << "\n";
-        error_file << smallest_cell_size(triangulation) << " " << l2_error << "\n";
-        error_file.flush();
-
-        // refinement
-
-        dealii::Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
-        dealii::KellyErrorEstimator<2>::estimate( dof_handler, dealii::QGauss<1>(fe.degree + 1), {}, solution, estimated_error_per_cell);
-        dealii::GridRefinement::refine_and_coarsen_fixed_number(triangulation, estimated_error_per_cell, 0.3, 0.03);
-
-        //triangulation.refine_global(1);
-        triangulation.execute_coarsening_and_refinement();
-        dof_handler.distribute_dofs(fe);
-    }
-
-    error_file.close();
 }
