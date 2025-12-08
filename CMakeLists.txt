@@ -13,7 +13,7 @@ endif()
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/solutions)
 
 set(TARGET poisson)
-set(TARGET_SRC poisson.cc)
+set(TARGET_SRC src/poisson.cc)
 project(${TARGET})
 
 deal_ii_initialize_cached_variables()
