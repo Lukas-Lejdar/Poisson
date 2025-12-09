@@ -135,7 +135,7 @@ unsigned int count_faces_with_boundary_id(const dealii::Triangulation<dim> &tria
     return count;
 }
 
-const double MIN_CELL_SIZE = 0.01;
+const double MIN_CELL_SIZE = 0.001;
 const double MAX_CELL_SIZE = 0.3;
 
 
@@ -165,7 +165,7 @@ void test_on_radial_capacitor() {
 
     std::ofstream error_file("l2_errors.txt");
 
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 8; i++) {
 
         dealii::AffineConstraints<double> constraints;
         dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);

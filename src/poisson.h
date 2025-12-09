@@ -164,7 +164,7 @@ dealii::Vector<double> solve_cg(const MatrixType& system_matrix, const VectorTyp
     dealii::Vector<double> solution;
     solution.reinit(system_matrix.m());
 
-    dealii::SolverControl solver_control(2000, 1e-6 * rhs.l2_norm());
+    dealii::SolverControl solver_control(4000, 1e-6 * rhs.l2_norm());
     dealii::PreconditionSSOR<MatrixType> preconditioner;
     preconditioner.initialize(system_matrix, 1.2);
 
@@ -248,39 +248,14 @@ void write_out_solution(
     data_out.write_vtu(output);
 }
 
-//void restrict_refinement_by_cell_size(
-//    dealii::Triangulation<2> &triangulation,
-//    const double min_cell_size,
-//    const double max_cell_size
-//) {
-//    for (auto &cell : triangulation.active_cell_iterators()) {
-//        const double h = cell->diameter();
-//        if (h < min_cell_size) cell->clear_refine_flag();
-//        if (h > max_cell_size) cell->clear_coarsen_flag();
-//    }
-//}
-
-
 void restrict_refinement_by_cell_size(
     dealii::Triangulation<2> &triangulation,
     const double min_cell_size,
     const double max_cell_size
 ) {
-    double h_min = std::numeric_limits<double>::max();
-    double h_max = std::numeric_limits<double>::lowest();
-
     for (auto &cell : triangulation.active_cell_iterators()) {
         const double h = cell->diameter();
-
-        // Track min and max
-        h_min = std::min(h_min, h);
-        h_max = std::max(h_max, h);
-
-        if (h < min_cell_size)
-            cell->clear_refine_flag();
-        if (h > max_cell_size)
-            cell->clear_coarsen_flag();
+        if (h < min_cell_size) cell->clear_refine_flag();
+        if (h > max_cell_size) cell->clear_coarsen_flag();
     }
-
-    std::cout << "Cell size: min = " << h_min << ", max = " << h_max << std::endl;
 }
