@@ -12,6 +12,7 @@ endif()
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/solutions)
 
+set(CMAKE_CXX_STANDARD 20)
 set(TARGET poisson)
 set(TARGET_SRC src/main.cc)
 project(${TARGET})

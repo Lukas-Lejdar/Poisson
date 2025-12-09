@@ -31,7 +31,6 @@
 #include <cmath>
 #include <fstream>
 
-
 dealii::UpdateFlags POISSON_VOLUME_FLAGS = 
     dealii::update_gradients |
     dealii::update_JxW_values |
@@ -62,22 +61,21 @@ void assemble_local_poisson_volume_matrix(
 }
 
 
-dealii::UpdateFlags POISSON_BOUNDARY_FLAGS = 
+dealii::UpdateFlags POISSON_BOUNDARY_RHS_FLAGS = 
     dealii::update_values |
-    dealii::update_normal_vectors |
-    dealii::update_gradients |
     dealii::update_JxW_values  |
     dealii::update_quadrature_points;
 
 
 template<int dim>
-void assemble_local_poisson_boundary_matrix(
-    const dealii::FEFaceValues<dim> &fe_face_values,
-    const dealii::Function<dim> &permittivity,
-    dealii::FullMatrix<double> &local_mat
+void assemble_local_poisson_rhs(
+    const dealii::FEFaceValues<dim>& fe_face_values,
+    const dealii::Function<dim>& permittivity,
+    const dealii::Function<dim>& flux,
+    dealii::Vector<double>& cell_rhs
 ) {
     const auto flags = fe_face_values.get_update_flags();
-    Assert((flags & POISSON_BOUNDARY_FLAGS) == POISSON_BOUNDARY_FLAGS,
+    Assert((flags & POISSON_BOUNDARY_RHS_FLAGS) == POISSON_BOUNDARY_RHS_FLAGS,
        dealii::ExcMessage("assemble_local_poisson_boundary_matrix: FEValues missing required update flags."));
 
     for (const uint q : fe_face_values.quadrature_point_indices()) {
@@ -85,12 +83,7 @@ void assemble_local_poisson_boundary_matrix(
         const double eps = permittivity.value(x_q);
 
         for (uint i = 0; i < fe_face_values.get_fe().dofs_per_cell; ++i) {
-            for (uint j = 0; j < fe_face_values.get_fe().dofs_per_cell; ++j) {
-                const dealii::Tensor<1,dim>& normal = fe_face_values.normal_vector(q);
-                local_mat(i, j) -= fe_face_values.shape_value(i, q) 
-                    * normal * eps * fe_face_values.shape_grad(j, q) 
-                    * fe_face_values.JxW(q);
-            }
+            cell_rhs(i) += fe_face_values.shape_value(i, q) * eps * flux.value(x_q) * fe_face_values.JxW(q);
         }
     }
 }
@@ -106,11 +99,11 @@ void assemble_poisson_system(
 ) {
     auto& fe = dof_handler.get_fe();
     
-    dealii::QGauss<dim> quadrature{fe.degree + 1};
     dealii::QGauss<dim-1> face_quadrature{fe.degree + 1};
+    dealii::FEFaceValues<dim> fe_face_values{fe, face_quadrature, POISSON_BOUNDARY_RHS_FLAGS };
 
+    dealii::QGauss<dim> quadrature{fe.degree + 1};
     dealii::FEValues<dim> fe_values{fe, quadrature, POISSON_VOLUME_FLAGS };
-    dealii::FEFaceValues<dim> fe_face_values{fe, face_quadrature, POISSON_BOUNDARY_FLAGS };
 
     dealii::FullMatrix<double> local_mat(fe.dofs_per_cell, fe.dofs_per_cell);
     dealii::Vector<double> cell_rhs(fe.dofs_per_cell);
@@ -123,20 +116,48 @@ void assemble_poisson_system(
         fe_values.reinit(cell);
         assemble_local_poisson_volume_matrix(fe_values, permittivity, local_mat);
 
-        for (uint face = 0; face < dealii::GeometryInfo<dim>::faces_per_cell; ++face) {
-            if (!cell->face(face)->at_boundary()) continue;
-            fe_face_values.reinit(cell, face);
-            assemble_local_poisson_boundary_matrix(fe_face_values, permittivity, local_mat);
-        }
-
         cell->get_dof_indices(local_dof);
         constraints.distribute_local_to_global(local_mat, cell_rhs, local_dof, system_matrix, system_rhs);
     }
 }
 
+template<int dim>
+void assemble_poisson_rhs(
+    const dealii::DoFHandler<dim>& dof_handler,
+    const dealii::Function<dim>& permittivity,
+    const dealii::types::boundary_id boundary_id,
+    const dealii::Function<dim>& flux,
+    dealii::Vector<double>& system_rhs
+) {
+    auto& fe = dof_handler.get_fe();
+    
+    dealii::QGauss<dim-1> face_quadrature{fe.degree + 1};
+    dealii::FEFaceValues<dim> fe_face_values{fe, face_quadrature, POISSON_BOUNDARY_RHS_FLAGS };
+
+    dealii::Vector<double> cell_rhs(fe.dofs_per_cell);
+    std::vector<dealii::types::global_dof_index> local_dof(fe.dofs_per_cell);
+
+    for (const auto& cell : dof_handler.active_cell_iterators()) {
+        cell_rhs = 0;
+
+        for (uint face = 0; face < dealii::GeometryInfo<dim>::faces_per_cell; ++face) {
+            if (!cell->face(face)->at_boundary()) continue;
+            if (cell->face(face)->boundary_id() != boundary_id) continue;
+            fe_face_values.reinit(cell, face);
+            assemble_local_poisson_rhs(fe_face_values, permittivity, flux, cell_rhs);
+        }
+
+        cell->get_dof_indices(local_dof);
+        system_rhs.add(local_dof, cell_rhs);
+    }
+}
+
 
 template <typename MatrixType, typename VectorType>
-void solve_cg(const MatrixType& system_matrix, VectorType& solution, const VectorType& rhs) {
+dealii::Vector<double> solve_cg(const MatrixType& system_matrix, const VectorType& rhs) {
+    dealii::Vector<double> solution;
+    solution.reinit(system_matrix.m());
+
     dealii::SolverControl solver_control(1000, 1e-6 * rhs.l2_norm());
     dealii::PreconditionSSOR<MatrixType> preconditioner;
     preconditioner.initialize(system_matrix, 1.2);
@@ -144,39 +165,36 @@ void solve_cg(const MatrixType& system_matrix, VectorType& solution, const Vecto
     dealii::SolverCG<VectorType> solver(solver_control);
     solver.solve(system_matrix, solution, rhs, dealii::PreconditionIdentity());
     std::cout << solver_control.last_step() << " CG iterations needed to converge.\n";
-}
-
-template <int dim>
-dealii::Vector<double> solve_poisson_system(
-    const dealii::DoFHandler<dim>& dof_handler,
-    const dealii::Function<dim>& permittivity,
-    const dealii::AffineConstraints<double>& user_constraints
-) {
-
-    dealii::AffineConstraints<double> constraints{user_constraints};
-    dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
-    constraints.close();
-
-    dealii::DynamicSparsityPattern dsp(dof_handler.n_dofs());
-    dealii::DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, false);
-    dealii::SparsityPattern sp;
-    sp.copy_from(dsp);
-
-    dealii::Vector<double> solution;
-    dealii::Vector<double> system_rhs;
-    dealii::SparseMatrix<double> system_matrix;
-
-    system_matrix.reinit(sp);
-    system_rhs.reinit(dof_handler.n_dofs());
-    solution.reinit(dof_handler.n_dofs());
-
-    assemble_poisson_system(dof_handler, constraints, permittivity, system_matrix, system_rhs);
-    solve_cg(system_matrix, solution, system_rhs);
-    constraints.distribute(solution);
 
     return solution;
 }
 
+
+class LinearSystem {
+public:
+    dealii::Vector<double> rhs;
+    dealii::SparseMatrix<double> matrix;
+
+    LinearSystem();
+
+    template<int dim>
+    LinearSystem( const dealii::DoFHandler<dim>& dof_handler, const dealii::AffineConstraints<double>& constraints) { 
+        reinit(dof_handler, constraints); 
+    }
+
+    template<int dim>
+    void reinit(const dealii::DoFHandler<dim>& dof_handler, const dealii::AffineConstraints<double>& constraints) {
+        dealii::DynamicSparsityPattern dsp(dof_handler.n_dofs());
+        dealii::DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, false);
+
+        sp.copy_from(dsp);
+        matrix.reinit(sp);
+        rhs.reinit(matrix.m());
+    }
+
+private:
+    dealii::SparsityPattern sp;
+};
 
 template<int dim>
 double smallest_cell_size(const dealii::Triangulation<dim>& triangulation) {

@@ -1,4 +1,5 @@
 
+#include <deal.II/base/function.h>
 #include <deal.II/grid/tria.h>
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/dofs/dof_handler.h>
@@ -13,6 +14,7 @@
 #include <iostream>
 #include <cmath>
 #include <string>
+#include <format>
 
 #include "poisson.h"
 
@@ -22,7 +24,7 @@ struct RadialCapacitor{
     const double r2;
 
     const double voltage0;
-    const double voltage1;
+    const double surface_charge1;
 
     const double epsilon0_1;
     const double epsilon1_2;
@@ -41,7 +43,7 @@ public:
 
 class Exact2DPotentialSolution : public dealii::Function<2> {
 private:
-    // phi(r ∈ [r0, r1]) = solution[0] ln r + solution[2]
+    // phi(r ∈ [r0, r1]) = solution[0] ln r + solution[1]
     // phi(r ∈ [r1, r2]) = solution[2] ln r + solution[3]
     dealii::Vector<double> consts; 
 
@@ -50,10 +52,10 @@ public:
     Exact2DPotentialSolution(const RadialCapacitor capacitor) 
         : capacitor(capacitor) 
     {
-        const double rhs_vec[4] = { capacitor.voltage0, capacitor.voltage1, 0, 0 };
+        const double rhs_vec[4] = { capacitor.voltage0, capacitor.surface_charge1, 0, 0 };
         const double system_mat[4][4] = {
             { std::log(capacitor.r0), 1.0, 0.0, 0.0 },
-            { 0.0, 0.0, std::log(capacitor.r2), 1.0 },
+            { 0.0, 0.0, 1/(capacitor.r2), 0.0 },
             { std::log(capacitor.r1), 1.0, -std::log(capacitor.r1), -1.0 },
             { capacitor.epsilon0_1, 0.0, -capacitor.epsilon1_2, 0.0 }
         };
@@ -79,31 +81,80 @@ public:
             ? consts[0]*std::log(r) + consts[1] 
             : consts[2]*std::log(r) + consts[3];
     }
+
+    const dealii::Vector<double>& get_consts() const { return consts; }
+
 };
+
+template<int dim>
+void change_boundary_id(
+    dealii::Triangulation<dim>& triangulation,
+    const dealii::types::boundary_id from,
+    const dealii::types::boundary_id to
+) {
+    for (auto &cell : triangulation.active_cell_iterators()) {
+        for (uint f = 0; f < dealii::GeometryInfo<2>::faces_per_cell; ++f) {
+            if (cell->face(f)->at_boundary() && cell->face(f)->boundary_id() == from) {
+                cell->face(f)->set_boundary_id(to);
+            }
+        }
+    }
+}
+
+const dealii::types::boundary_id INNER_ID = 1, OUTER_ID = 2, SIDES_ID = 3; 
 
 template<int dim>
 dealii::Triangulation<2> get_capacitor_triangulation(const RadialCapacitor& capacitor) {
     dealii::Triangulation<2> triangulation;
     const dealii::Point<2> center(0, 0);
     dealii::GridGenerator::hyper_shell( triangulation, center, capacitor.r0, capacitor.r2, 10, true);
+    change_boundary_id(triangulation, 1, OUTER_ID);
+    change_boundary_id(triangulation, 0, INNER_ID);
     return triangulation;
 } 
+
+
+template <int dim>
+unsigned int count_faces_with_boundary_id(const dealii::Triangulation<dim> &triangulation, const unsigned int boundary_id) {
+    unsigned int count = 0;
+    for (const auto &cell : triangulation.active_cell_iterators())
+        for (unsigned int f = 0; f < dealii::GeometryInfo<dim>::faces_per_cell; ++f)
+            if (cell->face(f)->at_boundary() &&
+                cell->face(f)->boundary_id() == boundary_id)
+                ++count;
+    return count;
+}
+
 
 int main() {
 
     // problem definition
 
-    const   RadialCapacitor capacitor{0.5, 0.75, 1., 0., 1., 1., 10.}; // r0, r1, r2, U0, U2, eps0_1, eps1_2
+    const RadialCapacitor capacitor{0.5, 0.75, 1., 0., 0.75, 1., 2.}; // r0, r1, r2, U0, U2, eps0_1, eps1_2
     const Exact2DPotentialSolution ex_solution(capacitor); 
     const PermittivityFunction<2> permittivity{capacitor};
 
     // Create triangulation
 
-    dealii::Triangulation<2> triangulation = get_capacitor_triangulation<2>(capacitor);
-    triangulation.refine_global(2);
+    //dealii::Triangulation<2> triangulation = get_capacitor_triangulation<2>(capacitor);
+    //triangulation.refine_global(2);
 
-    // boundary ids assigned in dealii::GridGenerator::hyper_shell
-    const dealii::types::boundary_id inner_id = 0, outer_id = 1; 
+    dealii::Triangulation<2> triangulation;
+    dealii::GridIn<2> gridin;
+    gridin.attach_triangulation(triangulation);
+    std::ifstream input_file("../capacitor.msh");
+    gridin.read_msh(input_file);  // Gmsh format
+
+    dealii::Point<2> center(0.0, 0.0);
+    triangulation.set_manifold(INNER_ID, dealii::SphericalManifold<2>(center));
+    triangulation.set_manifold(OUTER_ID, dealii::SphericalManifold<2>(center));
+
+    std::cout << "boudnary id 0: " << count_faces_with_boundary_id(triangulation, 0) << "\n";
+    std::cout << "boudnary id 1: " << count_faces_with_boundary_id(triangulation, 1) << "\n";
+    std::cout << "boudnary id 2: " << count_faces_with_boundary_id(triangulation, 2) << "\n";
+    std::cout << "boudnary id 3: " << count_faces_with_boundary_id(triangulation, 3) << "\n";
+    std::cout << "boudnary id 4: " << count_faces_with_boundary_id(triangulation, 4) << "\n";
+    std::cout << "boudnary id 5: " << count_faces_with_boundary_id(triangulation, 5) << "\n";
 
     // solve
 
@@ -113,14 +164,23 @@ int main() {
 
     std::ofstream error_file("l2_errors.txt");
 
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 12; i++) {
 
         dealii::AffineConstraints<double> constraints;
-        dealii::VectorTools::interpolate_boundary_values(dof_handler, inner_id, dealii::Functions::ConstantFunction<2>(capacitor.voltage0), constraints); 
-        dealii::VectorTools::interpolate_boundary_values(dof_handler, outer_id, dealii::Functions::ConstantFunction<2>(capacitor.voltage1), constraints); 
+        dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+        dealii::VectorTools::interpolate_boundary_values(dof_handler, INNER_ID, dealii::Functions::ConstantFunction<2>(capacitor.voltage0), constraints); 
+        constraints.close();
 
-        dealii::Vector<double> solution = solve_poisson_system(dof_handler, permittivity, constraints);
-        write_out_solution(dof_handler, solution, "solutions/solution" + std::to_string(i) + ".vtu");
+        auto poisson_system = LinearSystem(dof_handler, constraints);
+
+        assemble_poisson_system(dof_handler, constraints, permittivity, poisson_system.matrix, poisson_system.rhs);
+        assemble_poisson_rhs(dof_handler, permittivity, OUTER_ID, dealii::Functions::ConstantFunction<2>(ex_solution.get_consts()(2)/capacitor.r2), poisson_system.rhs);
+        assemble_poisson_rhs(dof_handler, permittivity, SIDES_ID, dealii::Functions::ZeroFunction<2>(), poisson_system.rhs);
+
+        auto solution = solve_cg(poisson_system.matrix, poisson_system.rhs);
+        constraints.distribute(solution);
+
+        write_out_solution(dof_handler, solution, std::format("solutions/solution{:02}.vtu", i));
 
         // l2 error
 
