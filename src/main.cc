@@ -1,5 +1,6 @@
 
 #include <deal.II/base/function.h>
+#include <deal.II/base/types.h>
 #include <deal.II/grid/tria.h>
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/dofs/dof_handler.h>
@@ -24,7 +25,7 @@ struct RadialCapacitor{
     const double r2;
 
     const double voltage0;
-    const double surface_charge1;
+    const double voltage2;
 
     const double epsilon0_1;
     const double epsilon1_2;
@@ -43,16 +44,24 @@ public:
 
 class Exact2DPotentialSolution : public dealii::Function<2> {
 private:
-    // phi(r ∈ [r0, r1]) = solution[0] ln r + solution[1]
-    // phi(r ∈ [r1, r2]) = solution[2] ln r + solution[3]
+    // phi(r) = solution[0] ln r + solution[1]   :  r ∈ [r0, r1]
+    // phi(r) = solution[2] ln r + solution[3]   :  r ∈ [r1, r2]
     dealii::Vector<double> consts; 
+    const RadialCapacitor capacitor;
 
 public:
-    const RadialCapacitor capacitor;
-    Exact2DPotentialSolution(const RadialCapacitor capacitor) 
-        : capacitor(capacitor) 
-    {
-        const double rhs_vec[4] = { capacitor.voltage0, capacitor.surface_charge1, 0, 0 };
+    const dealii::Vector<double>& get_consts() const { return consts; }
+
+    double value(const dealii::Point<2> &p, const unsigned int = 0) const override {
+        double r = p.norm();
+        return (r < capacitor.r1)
+            ? consts[0]*std::log(r) + consts[1] 
+            : consts[2]*std::log(r) + consts[3];
+    }
+
+    Exact2DPotentialSolution(const RadialCapacitor capacitor) : capacitor(capacitor) {
+
+        const double rhs_vec[4] = { capacitor.voltage0, capacitor.voltage2, 0, 0 };
         const double system_mat[4][4] = {
             { std::log(capacitor.r0), 1.0, 0.0, 0.0 },
             { 0.0, 0.0, 1/(capacitor.r2), 0.0 },
@@ -74,16 +83,6 @@ public:
         system.gauss_jordan();             // in-place Gauss-Jordan invert
         system.vmult(consts, rhs);         // x = A^{-1} * b
     }
-
-    double value(const dealii::Point<2> &p, const unsigned int = 0) const override {
-        double r = p.norm();
-        return (r < capacitor.r1)
-            ? consts[0]*std::log(r) + consts[1] 
-            : consts[2]*std::log(r) + consts[3];
-    }
-
-    const dealii::Vector<double>& get_consts() const { return consts; }
-
 };
 
 template<int dim>
@@ -101,7 +100,9 @@ void change_boundary_id(
     }
 }
 
-const dealii::types::boundary_id INNER_ID = 1, OUTER_ID = 2, SIDES_ID = 3; 
+const dealii::types::boundary_id INNER_ID = 1, OUTER_ID = 2, MIDDLE_ID = 3, SIDES_ID = 4; 
+const dealii::types::material_id INNER_MAT_ID = 4, OUTER_MAT_ID = 5;
+
 
 template<int dim>
 dealii::Triangulation<dim> create_capacitor_triangulation(const RadialCapacitor& capacitor) {
@@ -113,18 +114,12 @@ dealii::Triangulation<dim> create_capacitor_triangulation(const RadialCapacitor&
     return triangulation;
 } 
 
-dealii::Triangulation<2> import_capacitor_triangulation(std::string file) {
+dealii::Triangulation<2> import_gmsh_capacitor_triangulation(std::string file) {
     dealii::Triangulation<2> triangulation;
     dealii::GridIn<2> gridin;
     gridin.attach_triangulation(triangulation);
     std::ifstream input_file(file);
-    gridin.read_msh(input_file);  // Gmsh format
-
-    dealii::Point<2> center(0.0, 0.0);
-    triangulation.set_manifold(INNER_ID, dealii::SphericalManifold<2>(center));
-    triangulation.set_all_manifold_ids_on_boundary(INNER_ID);
-    triangulation.set_manifold(OUTER_ID, dealii::SphericalManifold<2>(center));
-    triangulation.set_all_manifold_ids_on_boundary(OUTER_ID);
+    gridin.read_msh(input_file);
 
     return triangulation;
 } 
@@ -140,8 +135,12 @@ unsigned int count_faces_with_boundary_id(const dealii::Triangulation<dim> &tria
     return count;
 }
 
+const double MIN_CELL_SIZE = 0.01;
+const double MAX_CELL_SIZE = 0.3;
 
-int main() {
+
+
+void test_on_radial_capacitor() {
 
     // problem definition
 
@@ -152,7 +151,11 @@ int main() {
     // Create triangulation
 
     //dealii::Triangulation<2> triangulation = create_capacitor_triangulation<2>(capacitor);
-    dealii::Triangulation<2> triangulation = import_capacitor_triangulation("../capacitor.msh");
+    dealii::Triangulation<2> triangulation = import_gmsh_capacitor_triangulation("../capacitor.msh");
+
+    dealii::Point<2> center(0.0, 0.0);
+    triangulation.set_manifold(1, dealii::SphericalManifold<2>(center));
+    triangulation.set_all_manifold_ids(1);
 
     // solve
 
@@ -166,12 +169,12 @@ int main() {
 
         dealii::AffineConstraints<double> constraints;
         dealii::DoFTools::make_hanging_node_constraints(dof_handler, constraints);
-        dealii::VectorTools::interpolate_boundary_values(dof_handler, INNER_ID, dealii::Functions::ConstantFunction<2>(capacitor.voltage0), constraints); 
+        dealii::VectorTools::interpolate_boundary_values(dof_handler, INNER_ID, dealii::Functions::ConstantFunction<2>(capacitor.voltage0), constraints);
         constraints.close();
 
         auto poisson_system = LinearSystem(dof_handler, constraints);
 
-        assemble_poisson_system(dof_handler, constraints, permittivity, poisson_system.matrix, poisson_system.rhs);
+        assemble_poisson_system(dof_handler, constraints, -1, permittivity, poisson_system.matrix, poisson_system.rhs);
         assemble_poisson_rhs(dof_handler, permittivity, OUTER_ID, dealii::Functions::ConstantFunction<2>(ex_solution.get_consts()(2)/capacitor.r2), poisson_system.rhs);
         assemble_poisson_rhs(dof_handler, permittivity, SIDES_ID, dealii::Functions::ZeroFunction<2>(), poisson_system.rhs);
 
@@ -195,6 +198,8 @@ int main() {
         dealii::Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
         dealii::KellyErrorEstimator<2>::estimate( dof_handler, dealii::QGauss<1>(fe.degree + 1), {}, solution, estimated_error_per_cell);
         dealii::GridRefinement::refine_and_coarsen_fixed_number(triangulation, estimated_error_per_cell, 0.3, 0.03);
+        restrict_refinement_by_cell_size(triangulation, MIN_CELL_SIZE, MAX_CELL_SIZE);
+
 
         //triangulation.refine_global(1);
         triangulation.execute_coarsening_and_refinement();
@@ -202,4 +207,9 @@ int main() {
     }
 
     error_file.close();
+}
+
+
+int main() {
+    test_on_radial_capacitor();
 }

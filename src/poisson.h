@@ -93,6 +93,7 @@ template<int dim>
 void assemble_poisson_system(
     const dealii::DoFHandler<dim>& dof_handler,
     const dealii::AffineConstraints<double>& constraints,
+    const dealii::types::material_id material_id, 
     const dealii::Function<dim>& permittivity,
     dealii::SparseMatrix<double>& system_matrix,
     dealii::Vector<double>& system_rhs
@@ -110,6 +111,9 @@ void assemble_poisson_system(
     std::vector<dealii::types::global_dof_index> local_dof(fe.dofs_per_cell);
 
     for (const auto& cell : dof_handler.active_cell_iterators()) {
+        if (material_id != dealii::numbers::invalid_material_id &&
+            material_id != cell->material_id() ) { continue; }
+
         local_mat = 0;
         cell_rhs = 0;
 
@@ -142,7 +146,9 @@ void assemble_poisson_rhs(
 
         for (uint face = 0; face < dealii::GeometryInfo<dim>::faces_per_cell; ++face) {
             if (!cell->face(face)->at_boundary()) continue;
-            if (cell->face(face)->boundary_id() != boundary_id) continue;
+            if (boundary_id != dealii::numbers::invalid_boundary_id &&
+                boundary_id != cell->face(face)->boundary_id()) { continue; }
+
             fe_face_values.reinit(cell, face);
             assemble_local_poisson_rhs(fe_face_values, permittivity, flux, cell_rhs);
         }
@@ -240,4 +246,41 @@ void write_out_solution(
 
     std::ofstream output(file);
     data_out.write_vtu(output);
+}
+
+//void restrict_refinement_by_cell_size(
+//    dealii::Triangulation<2> &triangulation,
+//    const double min_cell_size,
+//    const double max_cell_size
+//) {
+//    for (auto &cell : triangulation.active_cell_iterators()) {
+//        const double h = cell->diameter();
+//        if (h < min_cell_size) cell->clear_refine_flag();
+//        if (h > max_cell_size) cell->clear_coarsen_flag();
+//    }
+//}
+
+
+void restrict_refinement_by_cell_size(
+    dealii::Triangulation<2> &triangulation,
+    const double min_cell_size,
+    const double max_cell_size
+) {
+    double h_min = std::numeric_limits<double>::max();
+    double h_max = std::numeric_limits<double>::lowest();
+
+    for (auto &cell : triangulation.active_cell_iterators()) {
+        const double h = cell->diameter();
+
+        // Track min and max
+        h_min = std::min(h_min, h);
+        h_max = std::max(h_max, h);
+
+        if (h < min_cell_size)
+            cell->clear_refine_flag();
+        if (h > max_cell_size)
+            cell->clear_coarsen_flag();
+    }
+
+    std::cout << "Cell size: min = " << h_min << ", max = " << h_max << std::endl;
 }
