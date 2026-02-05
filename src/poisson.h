@@ -140,6 +140,7 @@ void assemble_poisson_boundary_source(
 
             fe_face_values.reinit(cell, face);
             assemble_local_poisson_boundary_source(fe_face_values, surface_charge, cell_rhs);
+
         }
 
         cell->get_dof_indices(local_dof);
