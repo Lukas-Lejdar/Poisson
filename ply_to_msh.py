@@ -17,6 +17,7 @@ xyz = np.column_stack((
 faces = ply['face']['vertex_indices']
 
 material_ids = np.zeros(len(faces), dtype=int)
+manifold_ids = []
 
 for i, face in enumerate(faces):
     face_vertices = vertices.data[face]
@@ -25,8 +26,11 @@ for i, face in enumerate(faces):
         if not active:
             continue
 
-        if attr.startswith('mat_'):
+        if attr.endswith('_mat'):
             material_ids[i] = j+1
+
+        if attr.endswith('_manifold'):
+            manifold_ids.append([i, j+1])
 
 
 edges = set()
@@ -38,7 +42,7 @@ for face in faces:
 
 
 boundary_ids = []
-manifold_ids = []
+b_manifold_ids = []
 
 
 for edge in edges:
@@ -49,11 +53,11 @@ for edge in edges:
         if not active:
             continue
 
-        if attr.startswith('b_'):
+        if attr.endswith('_boundary'):
             boundary_ids.append([int(edge[0]), int(edge[1]), j+1])
 
-        if attr.startswith('m_'):
-            manifold_ids.append([int(edge[0]), int(edge[1]), j+1])
+        if attr.endswith('_bmanifold'):
+            b_manifold_ids.append([int(edge[0]), int(edge[1]), j+1])
 
 
 ply = PlyData.read("circle_centers.ply")
@@ -63,7 +67,7 @@ center_attribs.remove('x')
 center_attribs.remove('y')
 center_attribs.remove('z')
 
-circle_manifold_centers = []
+circle_centers = []
 
 for center in centers:
     for i, cattr in enumerate(center_attribs):
@@ -72,12 +76,18 @@ for center in centers:
 
         for j, attr in enumerate(attributes):
             if attr == cattr:
-                circle_manifold_centers.append([
+                circle_centers.append([
                     j+1, [float(center['x']), float(center['y']) ]
                 ])
 
 with open("src/mesh.h", "w", encoding="utf-8") as f:
+    f.write('\n#pragma once\n\n')
+
     f.write("#include <vector>\n")
+
+    f.write("\n")
+    for j, att in enumerate(attributes):
+        f.write(f"const int {att.upper()}_ID = {j+1};\n")
 
     f.write("\nconst std::vector<std::vector<float>> vertices = {\n")
     for x, y, z in xyz:
@@ -90,20 +100,39 @@ with open("src/mesh.h", "w", encoding="utf-8") as f:
         f.write(f"    {{{v0}, {v1}, {v2}, {v3}}},\n")
     f.write("};\n")
 
-    f.write("\nconst std::pair<int, std::vector<float>> circle_centers[] = {\n")
-    f.write("};\n")
-
-    f.write("\nconst std::vector<std::vector<int>> boundary_ids = {\n")
-    for v0, v1, id in boundary_ids:
-        f.write(f"    {{{v0}, {v1}, {id}}},\n")
-    f.write("};\n")
-
-    f.write("\nconst std::vector<std::vector<int>> boundary_manifold_ids = {\n")
-    f.write("};\n")
-
     f.write("\nconst std::vector<int> material_ids = {\n    ")
     for id in material_ids:
         f.write(f"{id}, ")
     f.write("\n};\n")
+
+    f.write("\nconst std::vector<std::pair<int, int>> manifold_ids = {\n")
+    for idx, id in manifold_ids:
+        f.write(f"{{ {idx}, {id} }}, ")
+    f.write("\n};\n")
+
+    f.write("\nconst std::vector<std::pair<int, std::vector<float>>> circle_centers = {\n")
+    for id, center in circle_centers:
+        f.write(f"    {{ {id}, {{ {center[0]}, {center[1]} }} }},\n")
+    f.write("};\n")
+
+    f.write("\nconst std::vector<std::pair<std::vector<int>, int>> boundary_ids = {\n")
+    for v0, v1, id in boundary_ids:
+        f.write(f"    {{{{{v0}, {v1} }}, {id}}},\n")
+    f.write("};\n")
+
+    f.write("\nconst std::vector<std::pair<std::vector<int>, int>> boundary_manifold_ids = {\n")
+    for v0, v1, id in b_manifold_ids:
+        f.write(f"    {{{{{v0}, {v1}}}, {id} }},\n")
+    f.write("};\n")
+
+
+    for j, attr in enumerate(attributes):
+        if not attr.endswith('_vertices'): continue
+
+        verts = np.where(vertices.data[attr])[0]
+        f.write(f"\nconst std::vector<int> {attr[:-9]}_vertex_ids = {{\n    ")
+        for v in verts:
+            f.write(f"{v}, ")
+        f.write("\n};\n")
 
 print()
