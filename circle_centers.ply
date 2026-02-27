@@ -1,0 +1,16 @@
+ply
+format ascii 1.0
+comment Created in Blender version 4.5.0
+element vertex 3
+property float x
+property float y
+property float z
+property float tip_manifold
+property float electrode1_bmanifold
+property float electrode2_bmanifold
+property float tip_bmanifold
+property float tip_inner_bmanifold
+end_header
+0.30876595 1.9884965 -0.2 1 0 0 1 1
+1.2534754 -0.21572636 -4.368979e-08 0 0 1 0 0
+-0.5923842 -0.21572639 -4.368979e-08 0 1 0 0 0

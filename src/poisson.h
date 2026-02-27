@@ -169,28 +169,10 @@ void calculate_poisson_face_residual(
                 fe_fvalues_neighbor.get_function_gradients(solution, grad_neighbor);
                 
                 for (unsigned int q=0; q<face_quadrature.size(); ++q) {
-                    auto p1 = fe_fvalues.quadrature_point(q);
-                    auto p2 = fe_fvalues_neighbor.quadrature_point(q);
-                    auto diff = p2 - p1;
-
-                    if ( diff.norm() > 1e-8 ) {
-                        std::cout << "same levevl, cell index " << cell->active_cell_index() << " quad points " << p1 << " " << p2 << "\n";
-                        errors[cell->active_cell_index()] += 1e3;
-                    }
-
                     double eps1 = permittivity(*cell, fe_fvalues, q);
                     double eps2 = permittivity(*neighbor, fe_fvalues_neighbor, q);
-
-                    auto normal = fe_fvalues.normal_vector(q);
-                    auto normal_neighbor = fe_fvalues_neighbor.normal_vector(q);
-
-                    double flux1 = eps1 * grad_cell[q] * normal;
-                    double flux2 = eps2 * grad_neighbor[q] * normal_neighbor;
-
-                    double jump = flux1 + flux2;
+                    double jump = (eps1 * grad_cell[q] - eps2 * grad_neighbor[q]) * fe_fvalues.normal_vector(q);
                     errors[cell->active_cell_index()] += diameter * jump * jump * fe_fvalues.JxW(q);
-
-                    //std::cout << "jump " << jump << " on point " << p1 << " flux " << flux1 << " " << flux2 << "\n";
                 }
             }
 
@@ -213,20 +195,7 @@ void calculate_poisson_face_residual(
                     for (unsigned int q=0; q<face_quadrature.size(); ++q) {
                         double eps1 = permittivity(*cell, fe_subface_values, q);
                         double eps2 = permittivity(*neighbor_child, fe_fvalues_neighbor, q);
-
-                        auto normal = fe_subface_values.normal_vector(q);
-                        auto normal_neighbor = fe_fvalues_neighbor.normal_vector(q);
-
-                        auto p1 = fe_subface_values.quadrature_point(q);
-                        auto p2 = fe_fvalues_neighbor.quadrature_point(q);
-                        auto diff = p2 - p1;
-
-                        if ( diff.norm() > 1e-8 ) {
-                            std::cout << "neighbor coarser, cell index " << cell->active_cell_index() << " quad points " << p1 << " " << p2 << "\n";
-                            errors[cell->active_cell_index()] += 1e3;
-                        }
-
-                        double jump = eps1 * grad_cell[q] * normal + eps2 * grad_neighbor[q] * normal_neighbor;
+                        double jump = ( eps1 * grad_cell[q] - eps2 * grad_neighbor[q] ) * fe_fvalues.normal_vector(q);
                         errors[cell->active_cell_index()] += diameter * jump * jump * fe_subface_values.JxW(q);
                     }
                 }
@@ -237,97 +206,6 @@ void calculate_poisson_face_residual(
     }
 }
 
-
-//template<int dim, typename FacePredicate, typename Permittivity>
-//requires FacePredicateConcept<dim, FacePredicate> && FEQuadratureFunctionConcept<dim, Permittivity>
-//void calculate_poisson_face_residual(
-//    const dealii::DoFHandler<dim>& dof_handler,
-//    dealii::Vector<double>& solution,
-//    dealii::Vector<double>& errors,
-//    Permittivity&& permittivity,
-//    FacePredicate&& face_predicate
-//) {
-//
-//    auto& fe = dof_handler.get_fe();
-//
-//    dealii::QGauss<dim-1> face_quadrature{fe.degree + 1};
-//    dealii::FEFaceValues<dim> fe_face_values{fe, face_quadrature,
-//        dealii::update_gradients| dealii::update_JxW_values | dealii::update_normal_vectors };
-//
-//    for (const auto& cell : dof_handler.active_cell_iterators()) {
-//        for (uint f = 0; f < dealii::GeometryInfo<dim>::faces_per_cell; ++f) {
-//            if (!face_predicate(*cell, f)) continue;
-//            if (cell->face(f)->at_boundary()) continue;
-//
-//            std::vector<dealii::Tensor<1, dim>> gradients(fe_face_values.n_quadrature_points);
-//
-//            fe_face_values.reinit(cell, f);
-//            fe_face_values.get_function_gradients(solution, gradients);
-//
-//            //... what do I do ? 
-//
-//            
-//        }
-//    }
-//}
-
-
-//template<int dim>
-//void assemble_winslow_system(
-//    const dealii::DoFHandler<dim>& dof_handler,
-//    const dealii::AffineConstraints<double>& constraints,
-//    dealii::SparseMatrix<double>& system_matrix,
-//    dealii::Vector<double>& system_rhs,
-//    const dealii::Vector<double> &potential
-//) {
-//    auto& fe = dof_handler.get_fe();
-//    
-//    dealii::QGauss<dim> quadrature{fe.degree + 1};
-//    dealii::FEValues<dim> fe_values{fe, quadrature, POISSON_VOLUME_FLAGS };
-//
-//    dealii::FullMatrix<double> local_mat(fe.dofs_per_cell, fe.dofs_per_cell);
-//    dealii::Vector<double> cell_rhs(fe.dofs_per_cell);
-//    std::vector<dealii::types::global_dof_index> local_dof(fe.dofs_per_cell);
-//
-//    unsigned int xc = 0;
-//    unsigned int yc = 1;
-//
-//    for (const auto& cell : dof_handler.active_cell_iterators()) {
-//
-//        cell->get_dof_indices(local_dof);
-//
-//        local_mat = 0;
-//        cell_rhs = 0;
-//
-//        fe_values.reinit(cell);
-//
-//        for (const uint q : fe_values.quadrature_point_indices()) {
-//
-//            dealii::Tensor<1, dim, double> grad_x;
-//            dealii::Tensor<1, dim, double> grad_y;
-//
-//            for (uint i = 0; i < fe.dofs_per_cell; i++) {
-//                //const dealii::Point<dim>& x_q = ?
-//                grad_x += x_q[xc] * fe_values.shape_grad_component(i, q, xc);
-//                grad_y += x_q[yc] * fe_values.shape_grad_component(i, q, yc);
-//            }
-//
-//            double J = 1 / (1 + grad_x.norm_square() + grad_y.norm_square());
-//
-//            for (uint i = 0; i < fe.dofs_per_cell; i++) {
-//                for (uint j = 0; j < fe.dofs_per_cell; j++) {
-//                    for (uint c : {xc, yc}) {
-//                        local_mat(i, j) += fe_values.shape_grad_component(i, q, c) 
-//                            * fe_values.shape_grad_component(j, q, c)
-//                            * fe_values.JxW(q) / J;
-//                    }
-//                }
-//            }
-//        }
-//
-//        constraints.distribute_local_to_global(local_mat, cell_rhs, local_dof, system_matrix, system_rhs);
-//    }
-//}
 
 template<int dim, typename FacePredicate>
 requires FacePredicateConcept<dim, FacePredicate>
@@ -426,153 +304,6 @@ void add_face_dirichlet_conditions(
     }
 }
 
-//template <int dim, typename FacePredicate>
-//requires FacePredicateConcept<dim, FacePredicate>
-//void add_face_tangency_conditions(
-//    const dealii::DoFHandler<dim> &dof_handler,
-//    dealii::AffineConstraints<double> &constraints,
-//    const dealii::Function<dim> &boundary_function,
-//    FacePredicate&& face_predicate,
-//    const std::vector<unsigned int>& components = {0, 1}
-//) {
-//
-//    auto& fe = dof_handler.get_fe();
-//
-//    for (const auto& cell : dof_handler.active_cell_iterators()) {
-//        for (uint f = 0; f < dealii::GeometryInfo<dim>::faces_per_cell; f++) {
-//            if(!face_predicate(*cell, f)) continue;
-//            const auto face = cell->face(f);
-//
-//            for (unsigned int v = 0; v < dealii::GeometryInfo<dim>::vertices_per_face; v++) {
-//                const dealii::Point<dim> &vertex = face->vertex(v);
-//
-//                // find the tangent vector and constrain one or the other so that we don't divide by 0
-//
-//            }
-//        }
-//    }
-//}
-
-template <int dim, typename FacePredicate>
-requires FacePredicateConcept<dim, FacePredicate>
-void add_face_tangency_conditions(
-    const dealii::DoFHandler<dim> &dof_handler,
-    dealii::AffineConstraints<double> &constraints,
-    FacePredicate&& face_predicate,
-    const std::vector<int>& global_v_indices,
-    const std::vector<unsigned int>& components = {0, 1}
-) {
-    static_assert(dim == 2, "Currently implemented for 2D only");
-
-    auto& fe = dof_handler.get_fe();
-
-    for (const auto& cell : dof_handler.active_cell_iterators()) {
-        for (unsigned int f = 0; f < dealii::GeometryInfo<dim>::faces_per_cell; ++f) {
-            if(!face_predicate(*cell, f)) continue;
-            const auto face = cell->face(f);
-
-            // Compute face normal
-
-            const auto p0 = face->vertex(0);
-            const auto p1 = face->vertex(1);
-
-            dealii::Tensor<1,dim> tangent = p1 - p0;
-            dealii::Tensor<1,dim> normal;
-            normal[0] = tangent[1];
-            normal[1] = -tangent[0];
-            normal /= normal.norm();
-
-            const double nx = normal[0];
-            const double ny = normal[1];
-
-            for (unsigned int v = 0; v < dealii::GeometryInfo<dim>::vertices_per_face; ++v) {
-
-                bool found = false;
-                for (auto gv : global_v_indices) {
-                    if (gv == face->vertex_index(v)) {
-                        found = true;
-                    }
-                }
-
-                if (found) continue;
-
-
-                const unsigned int dof0 = face->vertex_dof_index(v, components[0], cell->active_fe_index());
-                const unsigned int dof1 = face->vertex_dof_index(v, components[1], cell->active_fe_index());
-
-                auto& p = face->vertex(v);
-
-                if (constraints.is_constrained(dof0) || constraints.is_constrained(dof1)) continue;
-
-                if (std::abs(nx) > std::abs(ny)) {
-                    constraints.add_line(dof0);                 // v0 is master
-                    constraints.add_entry(dof0, dof1, -ny/nx); // v0 = -(ny/nx) * v1
-                    constraints.set_inhomogeneity(dof0, p[1]*ny/nx + p[0]);
-                } else {
-                    constraints.add_line(dof1);                 // v1 is master
-                    constraints.add_entry(dof1, dof0, -nx/ny); // v1 = -(nx/ny) * v0
-                    constraints.set_inhomogeneity(dof1, p[0]*nx/ny + p[1]);
-                }
-            }
-        }
-    }
-}
-
-template <int dim, typename VertexPredicate>
-requires VertexPredicateConcept<dim, VertexPredicate>
-void add_vertex_dirichlet_conditions(
-    const dealii::DoFHandler<dim> &dof_handler,
-    dealii::AffineConstraints<double> &constraints,
-    const dealii::Function<dim> &boundary_function,
-    VertexPredicate&& vertex_predicate,
-    const std::vector<unsigned int>& components = {0}
-) {
-    const auto& fe = dof_handler.get_fe();
-
-    for (const auto& cell : dof_handler.cell_iterators()) {
-        for (unsigned int v = 0; v < dealii::GeometryInfo<dim>::vertices_per_cell; ++v) {
-            if (!vertex_predicate(*cell, v)) 
-                continue;
-
-            auto vertex = cell->vertex(v);
-
-            for (unsigned int c : components) {
-                unsigned int dof_index = cell->vertex_dof_index(v, c);
-                double value = boundary_function.value(vertex, c);
-
-                constraints.add_line(dof_index);
-                constraints.set_inhomogeneity(dof_index, value);
-            }
-        }
-    }
-}
-
-template <int dim, typename VertexPredicate>
-requires VertexPredicateConcept<dim, VertexPredicate>
-void add_vertex_dirichlet_conditions(
-    const dealii::DoFHandler<dim> &dof_handler,
-    dealii::AffineConstraints<double> &constraints,
-    const dealii::Vector<double>& solution,
-    VertexPredicate&& vertex_predicate,
-    const std::vector<unsigned int>& components = {0}
-) {
-    const auto& fe = dof_handler.get_fe();
-
-    for (const auto& cell : dof_handler.cell_iterators()) {
-        for (unsigned int v = 0; v < dealii::GeometryInfo<dim>::vertices_per_cell; ++v) {
-            if (!vertex_predicate(*cell, v)) 
-                continue;
-
-            for (unsigned int c : components) {
-                unsigned int dof_index = cell->vertex_dof_index(v, c);
-
-                constraints.add_line(dof_index);
-                constraints.set_inhomogeneity(dof_index, solution[dof_index]);
-            }
-        }
-    }
-}
-
 template <typename MatrixType, typename VectorType>
 void solve_cg(
     const MatrixType& system_matrix,
@@ -618,8 +349,9 @@ private:
 template<int dim>
 double smallest_cell_size(const dealii::Triangulation<dim>& triangulation) {
     double h_min = std::numeric_limits<double>::max();
-    for (const auto &cell : triangulation.active_cell_iterators())
+    for (const auto &cell : triangulation.active_cell_iterators()) {
         h_min = std::min(h_min, cell->minimum_vertex_distance());
+    }
     return h_min;
 }
 
@@ -640,125 +372,6 @@ double get_l2_error(
     );
 
     return difference_per_cell.l2_norm();
-}
-
-template<int dim>
-dealii::Vector<double> per_cell_to_per_dof(
-    dealii::DoFHandler<dim>& dof_handler,
-    dealii::Vector<double>& per_cell
-) {
-    auto &triangulation = dof_handler.get_triangulation();
-    assert(triangulation.n_active_cells() == per_cell.size());
-
-    dealii::Vector<double> per_dof(dof_handler.n_dofs());
-    dealii::Vector<int> counts(dof_handler.n_dofs());
-
-    for (const auto &cell : dof_handler.active_cell_iterators()) {
-        for (unsigned int v = 0; v < dealii::GeometryInfo<dim>::vertices_per_cell; ++v) {
-            const unsigned int dof_idx = cell->vertex_dof_index(v, 0);
-            per_dof[dof_idx] += per_cell[cell->active_cell_index()];
-            counts[dof_idx] += 1;
-        }
-    }
-
-    for (unsigned int i = 0; i < dof_handler.n_dofs(); ++i) {
-        per_dof[i] /= counts[i];
-    }
-
-    return per_dof;
-}
-
-template<int dim>
-dealii::Vector<double> per_dof_to_per_cell(
-    dealii::DoFHandler<dim>& dof_handler,
-    dealii::Vector<double>& per_dof
-) {
-    assert(per_dof.size() == dof_handler.n_dofs());
-
-    auto& triangulation = dof_handler.get_triangulation();
-    dealii::Vector<double> per_cell(triangulation.n_active_cells());
-    dealii::Vector<int> counts(triangulation.n_active_cells());
-
-    for (auto& cell : dof_handler.active_cell_iterators()) {
-        for (unsigned int v; v < dealii::GeometryInfo<dim>::vertices_per_cell; v++) {
-            const unsigned int dof_idx = cell->vertex_dof_index(v, 0);
-            per_cell[cell->active_cell_index()] = per_dof[dof_idx];
-            counts[cell->active_cell_index()] += 1;
-        }
-    }
-
-    for (unsigned int i = 0; i < triangulation.n_active_cells(); i++) {
-        if (counts[i] != 0) {
-            per_cell[i] /= counts[i];
-        } else {
-            per_cell[i] = 0;
-        }
-
-    }
-
-    return per_cell;
-};
-
-template<int dim>
-std::vector<dealii::Vector<double>> calculate_grad(
-    dealii::DoFHandler<dim>& dof_handler,
-    dealii::Vector<double>& solution
-) {
-
-    auto& fe = dof_handler.get_fe();
-
-    dealii::QGauss<dim> quadrature{fe.degree + 1};
-    dealii::FEValues<dim> fe_values{fe, quadrature, 
-        dealii::update_gradients |
-        dealii::update_values
-     };
-
-    std::vector<dealii::types::global_dof_index> local_dof(fe.dofs_per_cell);
-    std::vector<dealii::Tensor<1, dim>> local_grads(quadrature.size());
-    std::vector<dealii::Vector<double>> cell_grads(dim);
-    for (uint d = 0; d < dim; d++) {
-        cell_grads[d] = dealii::Vector<double>(dof_handler.get_triangulation().n_active_cells());
-    }
-
-
-    for (const auto &cell : dof_handler.active_cell_iterators()) {
-
-        cell->get_dof_indices(local_dof);
-        fe_values.reinit(cell);
-        fe_values.get_function_gradients(solution, local_grads);
-
-        dealii::Tensor<1, dim> avg_grad;
-        for (const auto &g : local_grads) avg_grad += g;
-        avg_grad /= quadrature.size();
-
-        for (int d = 0; d < dim; d++) {
-            cell_grads[d][cell->active_cell_index()] = avg_grad[d];
-        }
-
-    }
-
-    std::vector<dealii::Vector<double>> grad(dim);
-    for (int d = 0; d < dim; d++) {
-        grad[d] = per_cell_to_per_dof(dof_handler, cell_grads[d]);
-    }
-
-    return grad;
-};
-
-
-dealii::Vector<double> norm(std::vector<dealii::Vector<double>>& field) {
-    unsigned int n_dofs = field[0].size();
-    dealii::Vector<double> norm(n_dofs);
-    for (unsigned int i = 0; i < n_dofs; ++i) {
-        double sq_sum = 0;
-        for (int d = 0; d < field.size(); d++) {
-            sq_sum += field[d][i] * field[d][i];
-        }
-
-        norm[i] = std::sqrt(sq_sum);
-    }
-
-    return norm;
 }
 
 template <int dim>

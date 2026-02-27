@@ -1,7 +1,7 @@
 import numpy as np
 from plyfile import PlyData
 
-ply = PlyData.read("reactor.ply")
+ply = PlyData.read("star.ply")
 vertices = ply['vertex']
 attributes = list(vertices.data.dtype.names)
 attributes.remove('x')
@@ -80,7 +80,7 @@ for center in centers:
                     j+1, [float(center['x']), float(center['y']) ]
                 ])
 
-with open("src/mesh.h", "w", encoding="utf-8") as f:
+with open("src/star.h", "w", encoding="utf-8") as f:
     f.write('\n#pragma once\n\n')
 
     f.write("#include <vector>\n")

@@ -165,12 +165,12 @@ struct ConstantQuadratureFunction {
 };
 
 struct MaterialIdQuadratureFunction {
-    const std::vector<int> ids;
+    const std::vector<unsigned int> ids;
     const std::vector<double> values;
     const double base_value;
 
     MaterialIdQuadratureFunction(
-        std::vector<int>&& ids,
+        std::vector<unsigned int>&& ids,
         std::vector<double>&& values,
         double base_value = 0
     ) : ids(ids), values(values), base_value(base_value) {
@@ -180,7 +180,7 @@ struct MaterialIdQuadratureFunction {
     template<int dim, typename FEType>
     double operator()(const dealii::CellAccessor<dim>& cell, const FEType&, unsigned int) const {
 
-        for (int i = 0; i < ids.size(); i++) {
+        for (unsigned int i = 0; i < ids.size(); i++) {
             if (ids[i] == cell.material_id()) {
                 return values[i];
             }
