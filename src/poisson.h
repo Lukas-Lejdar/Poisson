@@ -315,7 +315,7 @@ void solve_cg(
     preconditioner.initialize(system_matrix, 1.2);
 
     dealii::SolverCG<VectorType> solver(solver_control);
-    solver.solve(system_matrix, solution, rhs, dealii::PreconditionIdentity());
+    solver.solve(system_matrix, solution, rhs, preconditioner);
     std::cout << solver_control.last_step() << " CG iterations needed to converge.\n";
 }
 

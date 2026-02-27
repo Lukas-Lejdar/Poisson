@@ -18,6 +18,7 @@
 #include <deal.II/numerics/solution_transfer.h>
 // #include <deal.II/numerics/error_estimator.h>
 
+#include <deal.II/numerics/vector_tools_interpolate.h>
 #include <fstream>
 #include <iostream>
 #include <cmath>
@@ -206,7 +207,7 @@ void solve_reactor_potential(
 
 
 template <typename VectorType, typename UnaryFunction>
-void elementwise_apply(VectorType &in, UnaryFunction f) {
+void apply_elementwise(VectorType &in, UnaryFunction f) {
     for (unsigned int i = 0; i < in.size(); ++i) {
         in(i) = f(in[i]);
     }
@@ -241,25 +242,28 @@ void compute_reactor_potential() {
         dealii::SolutionTransfer<2> solution_transfer(dof_handler);
         solution_transfer.prepare_for_coarsening_and_refinement(solution);
 
-        {
-            Timer timer("Calculating residuals: ");
-            calculate_poisson_face_residual(dof_handler, solution, error_per_cell,
-                    permittivity, AllNonBoundaryFacesPredicate<2>());
+        //{
+        //    Timer timer("Calculating residuals: ");
+        //    calculate_poisson_face_residual(dof_handler, solution, error_per_cell,
+        //            permittivity, AllNonBoundaryFacesPredicate<2>());
 
-            elementwise_apply(error_per_cell, [](float x){ return std::sqrt(x); });
-        }
+        //    apply_elementwise(error_per_cell, [](float x){ return std::sqrt(x); });
+        //}
 
         {
             Timer timer("Writing to files: ");
             write_out_solution( dof_handler, solution, prev_solution, error_per_cell, i); 
         }
-        
+
+        //{
+        //    Timer timer("Executing adaptive refinement: ");
+        //    dealii::GridRefinement::refine_and_coarsen_fixed_number(triangulation, error_per_cell, 0.3, 0.0);
+        //    triangulation.execute_coarsening_and_refinement();
+        //}
 
         {
-            Timer timer("Executing refinement: ");
-            dealii::GridRefinement::refine_and_coarsen_fixed_number(triangulation, error_per_cell, 0.3, 0.0);
-            triangulation.execute_coarsening_and_refinement();
-            //triangulation.refine_global(1);
+            Timer timer("Executing global refinement");
+            triangulation.refine_global(1);
         }
 
         {
