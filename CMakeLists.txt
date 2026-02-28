@@ -17,14 +17,5 @@ set(TARGET poisson)
 set(TARGET_SRC src/main.cc)
 project(${TARGET})
 
-add_executable(test_kelly src/test_kelly.cc)
-deal_ii_setup_target(test_kelly)
-
 deal_ii_initialize_cached_variables()
 deal_ii_invoke_autopilot()
-
-add_custom_target(run_kelly
-    COMMAND test_kelly
-    DEPENDS test_kelly
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-)
