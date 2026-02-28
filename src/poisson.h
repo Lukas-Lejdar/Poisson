@@ -408,6 +408,8 @@ void write_out_solution(
     dealii::Vector<double> diff(solution);
     diff -= prev_solution;
 
+    std::cout << "max potential diff " << diff.linfty_norm() << "\n";
+
     ElectricFieldPostprocessor<dim> efield("E");
     data_out.add_data_vector(solution, "potential_(V)");
     data_out.add_data_vector(solution, efield);

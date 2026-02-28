@@ -2,6 +2,7 @@
 #include <boost/math/special_functions/math_fwd.hpp>
 #include <cstdlib>
 #include <deal.II/base/function.h>
+#include <deal.II/base/mpi_stub.h>
 #include <deal.II/base/types.h>
 #include <deal.II/grid/cell_data.h>
 #include <deal.II/grid/tria.h>
@@ -242,6 +243,7 @@ void compute_reactor_potential() {
         dealii::SolutionTransfer<2> solution_transfer(dof_handler);
         solution_transfer.prepare_for_coarsening_and_refinement(solution);
 
+
         //{
         //    Timer timer("Calculating residuals: ");
         //    calculate_poisson_face_residual(dof_handler, solution, error_per_cell,
@@ -262,9 +264,16 @@ void compute_reactor_potential() {
         //}
 
         {
-            Timer timer("Executing global refinement");
+            Timer timer("Executing global refinement: ");
+
+            //MPI_Comm mpi_communicator = MPI_COMM_WORLD;
+            //dealii::parallel::distributed::Triangulation<2> parallel_triangulation(mpi_communicator);
+            //parallel_triangulation.copy_triangulation(triangulation);
+            //triangulation.copy_triangulation(parallel_triangulation);
+        
             triangulation.refine_global(1);
         }
+
 
         {
             Timer timer("Transfering solution: ");
@@ -276,20 +285,7 @@ void compute_reactor_potential() {
     }
 }
 
-class LinearFunction : public dealii::Function<2> {
-public:
-    LinearFunction() : Function<2>() {}
-    virtual double value(
-        const dealii::Point<2> &p,
-        const unsigned int component = 0
-    ) const override {
-        return 20.0*p[0] - 30.0*p[1];
-    }
-};
-
-
-
-int main() {
+int main(int argc, char **argv) {
 
     //auto triangulation = build_triangulation(vertices, faces, material_ids, manifold_ids, circle_centers, boundary_ids, boundary_manifold_ids);
 
@@ -304,6 +300,7 @@ int main() {
     //std::ofstream out("exported.msh");
     //grid_out.write_msh(triangulation, out);
 
+    dealii::Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
     compute_reactor_potential();
 
     //improve_mesh_winslow();
