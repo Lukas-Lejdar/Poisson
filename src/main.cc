@@ -119,6 +119,7 @@ dealii::Triangulation<2> build_triangulation(
 
             for (auto me : boundary_manifold_ids) {
                 if (v0 == me.first[0] && v1 == me.first[1]) {
+                    std::cout << "setting bman id " << me.second << "\n";
                     cell->face(f)->set_manifold_id(me.second);
                 }
             }

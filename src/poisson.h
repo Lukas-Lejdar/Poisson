@@ -172,7 +172,8 @@ void calculate_poisson_face_residual(
                     double eps1 = permittivity(*cell, fe_fvalues, q);
                     double eps2 = permittivity(*neighbor, fe_fvalues_neighbor, q);
                     double jump = (eps1 * grad_cell[q] - eps2 * grad_neighbor[q]) * fe_fvalues.normal_vector(q);
-                    errors[cell->active_cell_index()] += diameter * jump * jump * fe_fvalues.JxW(q);
+                    double res = std::pow(jump * 2 / (eps1 + eps2), 2);
+                    errors[cell->active_cell_index()] += diameter * res * fe_fvalues.JxW(q);
                 }
             }
 
@@ -196,7 +197,8 @@ void calculate_poisson_face_residual(
                         double eps1 = permittivity(*cell, fe_subface_values, q);
                         double eps2 = permittivity(*neighbor_child, fe_fvalues_neighbor, q);
                         double jump = ( eps1 * grad_cell[q] - eps2 * grad_neighbor[q] ) * fe_fvalues.normal_vector(q);
-                        errors[cell->active_cell_index()] += diameter * jump * jump * fe_subface_values.JxW(q);
+                        double res = std::pow(jump * 2 / (eps1 + eps2), 2);
+                        errors[cell->active_cell_index()] += diameter * res * fe_subface_values.JxW(q);
                     }
                 }
             }
