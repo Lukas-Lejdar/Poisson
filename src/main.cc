@@ -69,6 +69,7 @@ dealii::Triangulation<2> build_triangulation(
         cells[i].material_id = i;
     }
 
+    dealii::GridTools::consistently_order_cells(cells);
     triangulation.create_triangulation(vertices_dealii, cells, dealii::SubCellData());
 
     for (auto center : circle_centers) {
@@ -119,7 +120,6 @@ dealii::Triangulation<2> build_triangulation(
 
             for (auto me : boundary_manifold_ids) {
                 if (v0 == me.first[0] && v1 == me.first[1]) {
-                    std::cout << "setting bman id " << me.second << "\n";
                     cell->face(f)->set_manifold_id(me.second);
                 }
             }
@@ -252,13 +252,13 @@ void compute_reactor_potential(float refine_level) {
         dealii::Legacy::SolutionTransfer<2> solution_transfer(dof_handler);
         solution_transfer.prepare_for_coarsening_and_refinement(solution);
 
-
         if (refine_level < 1.) {
             Timer timer("Calculating residuals: ");
             calculate_poisson_face_residual(dof_handler, solution, error_per_cell,
                     permittivity, AllNonBoundaryFacesPredicate<2>());
-
             apply_elementwise(error_per_cell, [](float x){ return std::sqrt(x); });
+
+            //dealii::KellyErrorEstimator<2>::estimate(dof_handler, dealii::QGauss<1>(fe.degree + 1), {}, solution, error_per_cell);
         }
 
         {
@@ -282,7 +282,6 @@ void compute_reactor_potential(float refine_level) {
         
             triangulation.refine_global(1);
         }
-
 
         {
             Timer timer("Transfering solution: ");

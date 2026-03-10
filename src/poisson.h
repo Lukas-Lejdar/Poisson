@@ -1,7 +1,6 @@
 
 #pragma once
 
-#include <boost/tuple/detail/tuple_basic.hpp>
 #include <deal.II/base/geometry_info.h>
 #include <deal.II/base/point.h>
 #include <deal.II/base/quadrature_lib.h>
@@ -147,7 +146,7 @@ void calculate_poisson_face_residual(
         dealii::update_normal_vectors |
         dealii::update_quadrature_points );
 
-    for (const auto& cell : dof_handler.active_cell_iterators()) {
+    for (auto& cell : dof_handler.active_cell_iterators()) {
         for (uint f = 0; f < dealii::GeometryInfo<dim>::faces_per_cell; ++f) {
             if (!face_predicate(*cell, f)) continue;
 
@@ -179,19 +178,19 @@ void calculate_poisson_face_residual(
 
 
             // neighbor is more refined
+            
             if (!cell->face(f)->at_boundary() && cell->neighbor(f)->has_children()) {
                 for (unsigned int subface = 0; subface < cell->face(f)->n_children(); subface++) {
                     auto neighbor_child = cell->neighbor_child_on_subface(f, subface);
 
                     fe_subface_values.reinit(cell, f, subface);
-                    fe_fvalues_neighbor.reinit(neighbor_child, cell->neighbor_of_neighbor(f)); // TODO: really cell->neighbor_of_neighbor(f) ?
+                    fe_fvalues_neighbor.reinit(neighbor_child, cell->neighbor_of_neighbor(f));
 
                     std::vector<dealii::Tensor<1,dim>> grad_cell(face_quadrature.size());
                     std::vector<dealii::Tensor<1,dim>> grad_neighbor(face_quadrature.size());
 
                     fe_subface_values.get_function_gradients(solution, grad_cell);
                     fe_fvalues_neighbor.get_function_gradients(solution, grad_neighbor);
-
 
                     for (unsigned int q=0; q<face_quadrature.size(); ++q) {
                         double eps1 = permittivity(*cell, fe_subface_values, q);
@@ -200,10 +199,9 @@ void calculate_poisson_face_residual(
                         double res = std::pow(jump * 2 / (eps1 + eps2), 2);
                         errors[cell->active_cell_index()] += diameter * res * fe_subface_values.JxW(q);
                     }
+
                 }
             }
-        
-            // skip coarser neighbors
         }
     }
 }
